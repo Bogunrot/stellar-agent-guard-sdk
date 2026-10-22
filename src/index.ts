@@ -245,6 +245,7 @@ export type {
 export {
   ConcurrentTelemetryStreamError,
   DEFAULT_JITTER_FRACTION,
+  DEFAULT_MAX_BUFFERED_PAGES,
   DEFAULT_TELEMETRY_RETRY_OPTIONS,
   GuardEventRingBuffer,
   GuardTelemetryListener,

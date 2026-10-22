@@ -76,7 +76,7 @@ Set `failedTx: true` in the constructor options to include failed-transaction
 diagnostics; this scan maintains its own cursor and does not advance the
 committed event cursor.
 Parameters include `startLedger`, `cursor`/`resumeLedger`, `pollIntervalMs`, `limit`,
-`jitter`, `rng`, `sleep`, `onGap`, `onUnknownTopics`, and `signal`.
+`maxBufferedPages`, `jitter`, `rng`, `sleep`, `onGap`, `onUnknownTopics`, and `signal`.
 
 #### Unknown topics
 
@@ -145,25 +145,58 @@ If the callback itself throws, that throw **propagates** out of the `for await`
 loop — the consumer asked for halt-on-first-error semantics by supplying a
 throwing callback, so it is not swallowed.
 
+#### Bounded look-ahead (backpressure, issue #36)
+
+`watch()` fetches through a bounded look-ahead pump: at most
+`maxBufferedPages` pages (`DEFAULT_MAX_BUFFERED_PAGES`, `2`, by default) are
+prefetched between the pump and the consumer, plus at most one request in
+flight, and the pump pulls sequentially — never more than one `getEvents` at a
+time. A consumer that processes slower than the poll cadence (a dashboard
+render loop, a file logger) therefore **throttles the fetches** once the bound
+is reached, instead of letting the stream race ahead with pages nobody has
+consumed (memory growth, rate-limit burn):
+
+```ts
+watch({
+  maxBufferedPages: 2, // pages buffered ahead of the consumer; integer >= 0
+});
+```
+
+The bound changes pacing, never the delivered sequence: same order, no loss,
+no duplicates — and `maxBufferedPages: 0` disables look-ahead entirely,
+restoring strict consumer-paced polling (one page fetched per pull), exactly
+the stream this option pre-dates.
+
+The stored cursor never leads the consumer's position: each page's cursors
+are saved **at delivery**, before the batch is yielded, so pages that were
+fetched but not delivered when a consumer stops are re-read after a restart
+(at-least-once, never lose-the-tail). A consumer that stops pulling stops the
+fetches once the bound is reached; a `break` after N pages drags no extra
+fetch past its own stop.
+
+The bound is validated **before the first poll**: a non-integer or negative
+value throws a `TypeError` when the stream starts, the same fail-loudly
+contract as `retry`.
+
 #### Aborting (`signal`)
 
 Aborting ends the stream as a normal exit, never a throw:
 
 - an abort before the first pull issues no RPC call at all — not even the
-  `getLatestLedger` probe that resolves a default `startLedger;
--
-  an abort between pages prevents the next poll and does not serve out the
+  `getLatestLedger` probe that resolves a default `startLedger`;
+- an abort between pages prevents the next poll and does not serve out the
   remaining poll delay (the default delay's timer is cleared, so no handle is
   left open);
-- an abort while a request is in flight lets that request's rejection go 
-  quietly as teardown instead of surfacing an `AbortError` or an unhandled
-  rejection.
+- an abort while a request is in flight ends the iterator without waiting for
+  that request, and the late response is discarded; its rejection goes quietly
+  as teardown instead of surfacing an `AbortError` or an unhandled rejection.
 
 **In-flight requests are not cancelled.** `@stellar/stellar-sdk` ^17 exposes
 `getEvents(request: Api.GetEventsRequest)` with no `AbortSignal` parameter, so
-there is no supported way to cancel a request that has already been sent. The
-worst case between `signal.abort()` and the iterator ending is therefore **one
-request duration**, never a full poll interval. The README's
+there is no supported way to cancel a request that has already been sent. It is
+not awaited either: `signal.abort()` ends the iterator immediately, even with a
+`getEvents` call pending, so a stop never waits out a request duration. The
+README's
 [“Aborting a watch”](../../README.md#aborting-a-watch-what-cancellation-does-and-does-not-cover)
 section states the same boundary for consumers.
 

@@ -597,6 +597,33 @@ for await (const events of listener.watch({
 }
 ```
 
+### Backpressure in `watch()` (bounded look-ahead)
+
+`watch()` never runs ahead of its consumer without a bound. At most
+`maxBufferedPages` pages (`DEFAULT_MAX_BUFFERED_PAGES`, `2`, by default) are
+prefetched between the poll loop and your `for await` body, plus at most one
+request in flight, and the pump pulls sequentially — never more than one
+`getEvents` at a time. A consumer that processes slower than the poll cadence
+(a dashboard render loop, a file logger) therefore **throttles the fetches**
+instead of letting the stream race ahead with pages nobody has consumed — no
+unbounded memory growth, no unconsumed rate-limit burn. A consumer that stops
+pulling stops the fetches once the bound is reached.
+
+```ts
+for await (const events of listener.watch({
+  maxBufferedPages: 0, // strict consumer-paced polling: one page fetched per pull
+})) {
+  await slowRender(events); // the next fetch waits for you
+}
+```
+
+The bound changes pacing, never what you receive: same order, no loss, no
+duplicates. Cursors are saved **when a page is delivered**, so the stored cursor
+never leads your position — pages fetched but not yet delivered when you stop
+are re-read after a restart (at-least-once, never lose-the-tail). An invalid
+bound (non-integer or negative) throws a `TypeError` when the stream starts,
+before any RPC is issued.
+
 ### Aborting a watch: what cancellation does and does not cover
 
 `watch({ signal })` ends the stream — aborting is a normal exit, never a throw.
@@ -623,8 +650,9 @@ depends on, `dependencies` in `package.json`) declares
 its internal JSON-RPC `postObject` helper takes no per-request config, so there
 is no supported way to plumb a signal through to the socket. The listener
 consequently stops *issuing* requests immediately but cannot cancel one already
-sent: the worst case between `signal.abort()` and the iterator ending is **one
-request duration** — never a whole poll interval. The rejection of that
+sent — and it does not wait for it either: aborting ends the iterator right
+away, even while a `getEvents` call is pending, and a response that arrives
+after teardown is discarded rather than delivered. The rejection of that
 in-flight request (or of an abort-aware `sleep`) is swallowed as teardown, so an
 aborted watch ends quietly in a `for await` loop instead of surfacing an
 `AbortError` or an unhandled rejection.
@@ -1114,7 +1142,7 @@ one-shot form.
 - [`docs/event-schema.md`](docs/event-schema.md) — every telemetry event and field, each labelled with its stability tier: **Stable** (relied on), **Append-only** (new values may appear, existing ones will not be removed or renamed), **Best-effort** (may change in any release), **Internal** (implementation detail, not a contract).
 - `GuardTelemetryListener`
   - `constructor(options: GuardTelemetryListenerOptions)`
-  - `watch(params?: GuardTelemetryWatchParams): AsyncIterable<GuardEventPage>` — Tails on-chain and uncommitted events. `params.signal` aborts at loop boundaries: no RPC call before the first pull, no poll after an abort, and the delay between polls is cut short. A request already in flight cannot be cancelled — see [Aborting a watch](#aborting-a-watch-what-cancellation-does-and-does-not-cover).
+  - `watch(params?: GuardTelemetryWatchParams): AsyncIterable<GuardEventPage>` — Tails on-chain and uncommitted events. `params.signal` aborts at loop boundaries: no RPC call before the first pull, no poll after an abort, and the delay between polls is cut short. A request already in flight cannot be cancelled — see [Aborting a watch](#aborting-a-watch-what-cancellation-does-and-does-not-cover). `params.maxBufferedPages?: number` bounds the look-ahead in front of the consumer (default `DEFAULT_MAX_BUFFERED_PAGES` = 2, `0` = strict consumer pacing); cursors are saved at delivery, so the stored cursor never leads the consumer (issue #36).
   - `watchAll(params?: GuardTelemetryUnifiedParams): AsyncIterable<GuardEvent>` — Merges the committed ledger stream with the `diagnostics` batches you feed it into **one ordered, de-duplicated stream**, so a single loop sees blocked decisions too. Each event carries `stream: 'committed' | 'diagnostic'` and, for diagnostics, `observedAt`. Ordering and de-duplication rules: [`docs/event-schema.md`](docs/event-schema.md).
   - `health(): GuardTelemetryHealthSnapshot` — Read-only operational snapshot: stream state (`idle`/`running`/`recovering`/`stopped`/`aborted`/`failed`), last successful poll, consecutive failures, per-stream cursors, failed-tx degradation, and known coverage gaps. Every field is a copy. Contract: [`docs/api/telemetry-listener.md`](docs/api/telemetry-listener.md#health-guardtelemetryhealthsnapshot).
   - `serializeEvent(event: GuardEvent): string` — Canonical single-line JSON for deterministic JSON-lines log shipping. Fixed key order, drops `undefined`, keeps `null`, renders `bigint` as a decimal string. Contract: [`docs/event-schema.md`](docs/event-schema.md#canonical-json-serialization--serializeevent).
