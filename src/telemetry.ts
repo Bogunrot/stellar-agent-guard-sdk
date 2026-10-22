@@ -435,7 +435,8 @@ function dataOf(raw: unknown): unknown {
     event?: { body?: unknown };
   };
   const body = (candidate.event?.body ?? candidate.body) as
-    { v0?: { data?: unknown }; value?: { v0?: { data?: unknown } } } | undefined;
+    | { v0?: { data?: unknown }; value?: { v0?: { data?: unknown } } }
+    | undefined;
   return body?.v0?.data ?? body?.value?.v0?.data;
 }
 
@@ -854,7 +855,12 @@ export interface GuardTelemetryGap {
  * - `failed` — the retry envelope was exhausted; `lastError` is set.
  */
 export type GuardTelemetryStreamState =
-  "idle" | "running" | "recovering" | "stopped" | "aborted" | "failed";
+  | "idle"
+  | "running"
+  | "recovering"
+  | "stopped"
+  | "aborted"
+  | "failed";
 
 /** A point-in-time, read-only snapshot of listener health (issue #286). */
 export interface GuardTelemetryHealthSnapshot {
