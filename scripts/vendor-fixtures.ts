@@ -143,8 +143,7 @@ const REASON_GLOSSARY: VendoredArtifact = {
   upstreamLanded: true,
   contentKey: "reasonGlossary",
   upstreamIssue: "Stellar-Agent-Guard/stellar-agent-guard-contracts#143",
-  note:
-    "machine-readable extraction of the landed contracts reason-glossary table (symbol, code, what-was-attempted, per-observer guidance, SPEC ref); the SDK's explainReason parity test consumes it as the reason-vocabulary source (SDK issue #38)",
+  note: "machine-readable extraction of the landed contracts reason-glossary table (symbol, code, what-was-attempted, per-observer guidance, SPEC ref); the SDK's explainReason parity test consumes it as the reason-vocabulary source (SDK issue #38)",
   updatedAt: "2026-10-21T00:00:00.000Z",
   transform: reasonGlossaryToJson,
 };
@@ -178,7 +177,10 @@ export function reasonGlossaryToJson(markdown: string): string {
   > = {};
   for (const line of lines.slice(start + 2)) {
     if (!line.startsWith("|")) break; // end of the table
-    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    const cells = line
+      .split("|")
+      .slice(1, -1)
+      .map((cell) => cell.trim());
     if (cells.length !== 7) {
       throw new Error(`reason glossary: expected 7 columns, got ${cells.length}: ${line}`);
     }
