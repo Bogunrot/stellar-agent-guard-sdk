@@ -291,9 +291,7 @@ describe("reason glossary parity (issue #38)", () => {
 
     // The lockstep check above is only meaningful if it can fail: a synthetic
     // reason the SDK does not know must be reported as a mismatch.
-    const withNewReason = Object.keys(reasonGlossary.reasons)
-      .concat("brand_new_reason")
-      .sort();
+    const withNewReason = Object.keys(reasonGlossary.reasons).concat("brand_new_reason").sort();
     const sdkSymbols = Object.keys(GUARD_REASON_CODES).sort();
     const missingFromSdk = withNewReason.filter((symbol) => !(symbol in GUARD_REASON_CODES));
 
